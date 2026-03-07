@@ -17,49 +17,45 @@ st.set_page_config(
 # --------------------------------------------------
 st.markdown("""
 <style>
-    body {
-        background-color: #0e1117;
-        color: #e6e6e6;
-    }
-    .stApp {
-        background-color: #0e1117;
-    }
-    .title {
-        font-size: 42px;
-        font-weight: 700;
-        text-align: center;
-        color: #4dd0e1;
-    }
-    .subtitle {
-        text-align: center;
-        font-size: 16px;
-        color: #b0bec5;
-        margin-bottom: 30px;
-    }
-    .card {
-        background-color: #161b22;
-        padding: 20px;
-        border-radius: 12px;
-        margin-bottom: 20px;
-        box-shadow: 0px 0px 10px rgba(0,0,0,0.4);
-    }
+body {
+    background-color: #0e1117;
+    color: #e6e6e6;
+}
+.stApp {
+    background-color: #0e1117;
+}
+.title {
+    font-size: 42px;
+    font-weight: 700;
+    text-align: center;
+    color: #4dd0e1;
+}
+.subtitle {
+    text-align: center;
+    font-size: 16px;
+    color: #b0bec5;
+    margin-bottom: 30px;
+}
+.card {
+    background-color: #161b22;
+    padding: 20px;
+    border-radius: 12px;
+    margin-bottom: 20px;
+    box-shadow: 0px 0px 10px rgba(0,0,0,0.4);
+}
 </style>
 """, unsafe_allow_html=True)
 
- 
 # --------------------------------------------------
-# LOAD MODEL & SCALER (NO CHANGES TO FILES)
+# LOAD MODEL
 # --------------------------------------------------
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+MODEL_PATH = os.path.join(BASE_DIR, "..", "models", "aqi_xgboost_model.pkl")
 
-XGB_MODEL_PATH = os.path.join(BASE_DIR, "..", "models", "aqi_xgboost_model.pkl")
-SCALER_PATH = os.path.join(BASE_DIR, "..", "models", "scaler.pkl")
-
-model = joblib.load(XGB_MODEL_PATH)
-scaler = joblib.load(SCALER_PATH)
+model = joblib.load(MODEL_PATH)
 
 # --------------------------------------------------
-# AQI LOGIC
+# AQI CATEGORY LOGIC
 # --------------------------------------------------
 def aqi_category(aqi):
     if aqi <= 50:
@@ -75,7 +71,6 @@ def aqi_category(aqi):
     else:
         return "Severe"
 
-
 def health_advisory(category):
     advice = {
         "Good": "Air quality is satisfactory. Ideal for outdoor activities.",
@@ -86,7 +81,6 @@ def health_advisory(category):
         "Severe": "Health alert! Everyone should stay indoors."
     }
     return advice[category]
-
 
 def category_color(category):
     colors = {
@@ -103,8 +97,9 @@ def category_color(category):
 # HEADER
 # --------------------------------------------------
 st.markdown("<div class='title'>🌍 AQI Prediction System</div>", unsafe_allow_html=True)
+
 st.markdown(
-    "<div class='subtitle'>Air Quality Index Prediction</div>",
+    "<div class='subtitle'>Air Quality Index Prediction using XGBoost</div>",
     unsafe_allow_html=True
 )
 
@@ -119,7 +114,12 @@ no2 = st.number_input("NO₂ (µg/m³)", 0.0, 500.0, 40.0)
 so2 = st.number_input("SO₂ (µg/m³)", 0.0, 500.0, 15.0)
 co = st.number_input("CO (mg/m³)", 0.0, 50.0, 1.2)
 o3 = st.number_input("O₃ (µg/m³)", 0.0, 500.0, 30.0)
+
 month = st.selectbox("Month", list(range(1, 13)))
+day = st.slider("Day", 1, 31, 15)
+
+# NEW YEAR INPUT
+year = st.number_input("Year", 2010, 2035, 2024)
 
 st.markdown("</div>", unsafe_allow_html=True)
 
@@ -127,13 +127,37 @@ st.markdown("</div>", unsafe_allow_html=True)
 # PREDICTION
 # --------------------------------------------------
 if st.button("🚀 Predict AQI"):
-    data = np.array([[pm25, pm10, no2, so2, co, o3, month]])
 
-    prediction = model.predict(data)[0]
+    # Feature Engineering (same as training)
+    pm_ratio = pm25 / (pm10 + 1)
+    pm_interaction = pm25 * pm10
+
+    no2_so2 = no2 * so2
+    co_o3 = co * o3
+    no2_o3_ratio = no2 / (o3 + 1)
+
+    pm25_rolling = pm25
+
+    # MODEL INPUT (15 FEATURES)
+    data = np.array([[
+        pm25, pm10, no2, so2, co, o3,
+        month, day, year,
+        pm_ratio, pm_interaction,
+        no2_so2, co_o3, no2_o3_ratio,
+        pm25_rolling
+    ]])
+
+    # Predict log(AQI)
+    prediction_log = model.predict(data)[0]
+
+    # Convert back
+    prediction = np.expm1(prediction_log)
+
     category = aqi_category(prediction)
 
     st.markdown("<div class='card'>", unsafe_allow_html=True)
-    st.success(f"**Predicted AQI:** {round(prediction, 2)}")
+
+    st.success(f"Predicted AQI: {round(prediction,2)}")
 
     st.markdown(
         f"<h3 style='color:{category_color(category)}'>AQI Category: {category}</h3>",
@@ -141,16 +165,18 @@ if st.button("🚀 Predict AQI"):
     )
 
     st.info(health_advisory(category))
+
     st.markdown("</div>", unsafe_allow_html=True)
 
 # --------------------------------------------------
 # FOOTER
 # --------------------------------------------------
 st.markdown("---")
+
 st.markdown("""
 <div style="text-align:center; color:#90a4ae;">
 <b>AQI Prediction System</b><br>
-<b>Dataset:</b> India AQI (2015–2020)<br>
-Machine Learning • Streamlit • Scikit-Learn
+Dataset: India AQI (2015–2020)<br>
+Machine Learning • XGBoost • Streamlit
 </div>
 """, unsafe_allow_html=True)
